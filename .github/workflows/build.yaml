@@ -1,0 +1,51 @@
+name: Rebuild Image
+
+on:
+  #   schedule:
+  #     - cron: '0 0 * * *'  # run daily
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+
+      - name: Log in to DockerHub
+        uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Install dependencies
+        run: |
+          curl -LO https://github.com/felicianotech/sonar/releases/download/v0.19.1/sonar-v0.19.1-amd64.deb
+          sudo dpkg -i sonar-v0.19.1-amd64.deb
+
+      - name: Check for new version
+        id: check_version
+        run: |
+          ORIGIN_HASH=$(curl -s https://registry.hub.docker.com/v2/repositories/verdaccio/verdaccio/tags/5 | jq -r '.images[0].digest')
+          FORK_HASH=$(sonar labels get signal24/verdaccio-with-s3 origin-hash | cut -d' ' -f2)
+          echo Origin hash: ${ORIGIN_HASH}
+          echo Fork hash: ${FORK_HASH}
+
+          if [ "$ORIGIN_HASH" != "$FORK_HASH" ]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "ORIGIN_HASH=$ORIGIN_HASH" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build and push
+        if: steps.check_version.outputs.should_build == 'true'
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          push: true
+          tags: signal24/verdaccio-with-s3:latest
+          build-args: |
+            ORIGIN_HASH=${{ steps.check_version.outputs.ORIGIN_HASH }}
